@@ -1,0 +1,25 @@
+# Claude
+CLAUDE.md
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build output
+dist/
+build/
+bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
