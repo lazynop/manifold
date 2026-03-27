@@ -8,7 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/steven/manifold/internal/provider"
-	"github.com/steven/manifold/internal/tui"
+	"github.com/steven/manifold/internal/tui/shared"
 )
 
 // Model represents the jobs list panel.
@@ -84,8 +84,8 @@ func (m Model) View() string {
 			break
 		}
 
-		icon := tui.StatusIcon(string(j.Status))
-		color := tui.StatusColor(string(j.Status))
+		icon := shared.StatusIcon(string(j.Status))
+		color := shared.StatusColor(string(j.Status))
 		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 
 		dur := formatDuration(j.Duration)
@@ -93,7 +93,7 @@ func (m Model) View() string {
 
 		line := fmt.Sprintf(" %s %-20s %s", iconStyled, name, dur)
 		if i == m.cursor {
-			line = tui.SelectedItem.Render(fmt.Sprintf(" %s %-20s %s", icon, name, dur))
+			line = shared.SelectedItem.Render(fmt.Sprintf(" %s %-20s %s", icon, name, dur))
 		}
 
 		b.WriteString(line)
@@ -102,12 +102,12 @@ func (m Model) View() string {
 		}
 	}
 
-	borderStyle := tui.PanelBorder
+	borderStyle := shared.PanelBorder
 	if m.Focused {
-		borderStyle = tui.PanelBorderActive
+		borderStyle = shared.PanelBorderActive
 	}
 
-	return borderStyle.Width(m.Width).Height(m.Height).Render(tui.PanelTitle.Render("Jobs") + "\n" + b.String())
+	return borderStyle.Width(m.Width).Height(m.Height).Render(shared.PanelTitle.Render("Jobs") + "\n" + b.String())
 }
 
 // formatDuration formats a duration as a short human-readable string.

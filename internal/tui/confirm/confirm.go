@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"charm.land/lipgloss/v2"
-	"github.com/steven/manifold/internal/tui"
+	"github.com/steven/manifold/internal/tui/shared"
 )
 
 // Model represents a confirmation dialog.
@@ -42,10 +42,10 @@ func (m *Model) Deny() {
 func (m Model) View() string {
 	prompt := fmt.Sprintf("%s  [y] yes  [n] no", m.Message)
 	inner := lipgloss.NewStyle().
-		Foreground(tui.ColorWhite).
+		Foreground(shared.ColorWhite).
 		Render(prompt)
 
-	return tui.PanelBorderActive.
+	return shared.PanelBorderActive.
 		Width(m.Width).
-		Render(tui.PanelTitle.Render(fmt.Sprintf("Confirm: %s", m.Action)) + "\n\n" + inner)
+		Render(shared.PanelTitle.Render(fmt.Sprintf("Confirm: %s", m.Action)) + "\n\n" + inner)
 }

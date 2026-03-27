@@ -7,7 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/steven/manifold/internal/provider"
-	"github.com/steven/manifold/internal/tui"
+	"github.com/steven/manifold/internal/tui/shared"
 )
 
 // Model represents the pipeline list panel.
@@ -80,15 +80,15 @@ func (m Model) View() string {
 			break
 		}
 
-		icon := tui.StatusIcon(string(p.Status))
-		color := tui.StatusColor(string(p.Status))
+		icon := shared.StatusIcon(string(p.Status))
+		color := shared.StatusColor(string(p.Status))
 		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 
 		ref := truncate(p.Ref, m.Width-10)
 		line := fmt.Sprintf(" %s %s", iconStyled, ref)
 
 		if i == m.cursor {
-			line = tui.SelectedItem.Render(fmt.Sprintf(" %s %s", icon, ref))
+			line = shared.SelectedItem.Render(fmt.Sprintf(" %s %s", icon, ref))
 		}
 
 		b.WriteString(line)
@@ -97,15 +97,15 @@ func (m Model) View() string {
 		}
 	}
 
-	borderStyle := tui.PanelBorder
+	borderStyle := shared.PanelBorder
 	if m.Focused {
-		borderStyle = tui.PanelBorderActive
+		borderStyle = shared.PanelBorderActive
 	}
 
 	return borderStyle.
 		Width(m.Width).
 		Height(m.Height).
-		Render(tui.PanelTitle.Render("Pipelines") + "\n" + b.String())
+		Render(shared.PanelTitle.Render("Pipelines") + "\n" + b.String())
 }
 
 func truncate(s string, maxLen int) string {

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/steven/manifold/internal/tui"
+	"github.com/steven/manifold/internal/tui/shared"
 )
 
 type Remote struct {
@@ -33,13 +33,13 @@ func (m Model) Selected() (Remote, bool) {
 // viewContent returns the rendered content as a string (used internally and by tea.Model View).
 func (m Model) viewContent() string {
 	var b strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Foreground(tui.ColorAccent).Render("Select a remote:")
+	title := lipgloss.NewStyle().Bold(true).Foreground(shared.ColorAccent).Render("Select a remote:")
 	b.WriteString("\n  " + title + "\n\n")
 	for i, r := range m.remotes {
 		cursor := "  "
 		if i == m.cursor { cursor = "> " }
 		line := fmt.Sprintf("  %s%-12s %s", cursor, r.Name, r.URL)
-		if i == m.cursor { line = tui.SelectedItem.Render(line) }
+		if i == m.cursor { line = shared.SelectedItem.Render(line) }
 		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n  Press Enter to select, q to quit\n")

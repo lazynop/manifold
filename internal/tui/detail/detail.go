@@ -7,7 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/steven/manifold/internal/provider"
-	"github.com/steven/manifold/internal/tui"
+	"github.com/steven/manifold/internal/tui/shared"
 )
 
 const defaultMaxLogLines = 10000
@@ -133,23 +133,23 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	if !m.hasJob {
-		borderStyle := tui.PanelBorder
+		borderStyle := shared.PanelBorder
 		if m.Focused {
-			borderStyle = tui.PanelBorderActive
+			borderStyle = shared.PanelBorderActive
 		}
-		placeholder := tui.NormalItem.Render("  Select a job to view details")
+		placeholder := shared.NormalItem.Render("  Select a job to view details")
 		return borderStyle.Width(m.Width).Height(m.Height).Render(
-			tui.PanelTitle.Render("Detail") + "\n" + placeholder,
+			shared.PanelTitle.Render("Detail") + "\n" + placeholder,
 		)
 	}
 
 	// Steps section
-	b.WriteString(tui.PanelTitle.Render(fmt.Sprintf("Job: %s", m.job.Name)))
+	b.WriteString(shared.PanelTitle.Render(fmt.Sprintf("Job: %s", m.job.Name)))
 	b.WriteString("\n")
 
 	for _, step := range m.job.Steps {
-		icon := tui.StatusIcon(string(step.Status))
-		color := tui.StatusColor(string(step.Status))
+		icon := shared.StatusIcon(string(step.Status))
+		color := shared.StatusColor(string(step.Status))
 		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 		line := fmt.Sprintf("  %s %s", iconStyled, step.Name)
 		b.WriteString(line)
@@ -169,13 +169,13 @@ func (m Model) View() string {
 
 	visible := m.logLines[m.logOffset:end]
 	for _, line := range visible {
-		b.WriteString(tui.NormalItem.Render(line))
+		b.WriteString(shared.NormalItem.Render(line))
 		b.WriteString("\n")
 	}
 
-	borderStyle := tui.PanelBorder
+	borderStyle := shared.PanelBorder
 	if m.Focused {
-		borderStyle = tui.PanelBorderActive
+		borderStyle = shared.PanelBorderActive
 	}
 
 	return borderStyle.Width(m.Width).Height(m.Height).Render(b.String())

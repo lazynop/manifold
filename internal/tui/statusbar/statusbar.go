@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/steven/manifold/internal/tui"
+	"github.com/steven/manifold/internal/tui/shared"
 )
 
 var defaultActions = []string{"[↑↓] navigate", "[enter] select", "[r]etry", "[q]uit"}
@@ -52,11 +52,11 @@ func (m *Model) ClearNotification() {
 
 // View renders the status bar.
 func (m Model) View() string {
-	leftStyle := tui.StatusBarStyle
+	leftStyle := shared.StatusBarStyle
 	if m.notification != "" && m.isError {
-		leftStyle = lipgloss.NewStyle().Foreground(tui.ColorRed)
+		leftStyle = lipgloss.NewStyle().Foreground(shared.ColorRed)
 	} else if m.notification != "" {
-		leftStyle = lipgloss.NewStyle().Foreground(tui.ColorYellow)
+		leftStyle = lipgloss.NewStyle().Foreground(shared.ColorYellow)
 	}
 
 	var left string
@@ -66,7 +66,7 @@ func (m Model) View() string {
 		left = leftStyle.Render(strings.Join(m.actions, "  "))
 	}
 
-	right := tui.StatusBarStyle.Render(m.provider)
+	right := shared.StatusBarStyle.Render(m.provider)
 
 	// Pad to fill width
 	bar := lipgloss.NewStyle().Width(m.Width).Render(left + "  " + right)
