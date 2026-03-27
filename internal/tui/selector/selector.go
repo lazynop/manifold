@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/steven/manifold/internal/tui/shared"
 )
@@ -30,7 +31,34 @@ func (m Model) Selected() (Remote, bool) {
 	return m.remotes[m.cursor], true
 }
 
-// viewContent returns the rendered content as a string (used internally and by tea.Model View).
+// Init implements tea.Model.
+func (m Model) Init() tea.Cmd { return nil }
+
+// Update implements tea.Model. It handles key navigation and selection.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "j", "down":
+			m.MoveDown()
+		case "k", "up":
+			m.MoveUp()
+		case "enter":
+			m.Select()
+			return m, func() tea.Msg { return tea.Quit() }
+		case "q", "ctrl+c":
+			return m, func() tea.Msg { return tea.Quit() }
+		}
+	}
+	return m, nil
+}
+
+// View implements tea.Model.
+func (m Model) View() tea.View {
+	return tea.NewView(m.viewContent())
+}
+
+// viewContent returns the rendered content as a string.
 func (m Model) viewContent() string {
 	var b strings.Builder
 	title := lipgloss.NewStyle().Bold(true).Foreground(shared.ColorAccent).Render("Select a remote:")
