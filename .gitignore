@@ -1,6 +1,9 @@
 # Claude
 CLAUDE.md
 
+# Worktrees
+.worktrees/
+
 # Dependencies
 node_modules/
 vendor/
