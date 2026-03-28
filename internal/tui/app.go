@@ -25,9 +25,10 @@ const (
 	PanelDetail    = 2
 	panelCount     = 3
 
-	minTerminalWidth = 80
-	fetchTimeout     = 10 * time.Second
-	logTimeout       = 5 * time.Second
+	minTerminalWidth    = 80
+	fetchTimeout        = 10 * time.Second
+	logTimeout          = 5 * time.Second
+	notificationTimeout = 3 * time.Second
 )
 
 type (
@@ -42,7 +43,8 @@ type (
 		Err    error
 		Action string
 	}
-	ErrMsg struct{ Err error }
+	ErrMsg               struct{ Err error }
+	clearNotificationMsg struct{}
 )
 
 // actionRequest represents a retry or cancel action on a pipeline or job.
@@ -89,6 +91,7 @@ type App struct {
 	ready             bool
 	tooNarrow         bool
 	showHelp          bool
+	fullscreen        bool
 }
 
 func NewApp(detect provider.DetectResult, confirmActions bool, pipelineLimit int) *App {
@@ -178,6 +181,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case JobsMsg:
 		a.jobsPanel.SetJobs(msg.Jobs)
 		a.updateStatusBarActions()
+		// Single job: auto-drill into detail
+		if len(msg.Jobs) == 1 {
+			a.detailPanel.SetJob(msg.Jobs[0])
+			a.focusedPanel = PanelDetail
+			a.updatePanelFocus()
+			return a, tea.Batch(a.fetchStepsForSelected(), a.fetchLog())
+		}
 		return a, nil
 
 	case StepsMsg:
@@ -199,10 +209,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.statusBar.SetNotification(fmt.Sprintf("%s succeeded", msg.Action), false)
 		}
-		return a, a.fetchPipelines()
+		return a, tea.Batch(a.fetchPipelines(), a.notifyTimer())
 
 	case ErrMsg:
 		a.statusBar.SetNotification(fmt.Sprintf("Error: %v", msg.Err), true)
+		return a, a.notifyTimer()
+
+	case clearNotificationMsg:
+		a.statusBar.ClearNotification()
 		return a, nil
 	}
 
@@ -235,6 +249,8 @@ func (a *App) View() tea.View {
 			lipgloss.Center, lipgloss.Center,
 			dialogView,
 		) + "\n" + a.statusBar.View()
+	} else if a.fullscreen {
+		content = lipgloss.JoinVertical(lipgloss.Left, a.detailPanel.View(), a.statusBar.View())
 	} else {
 		panelsRow := lipgloss.JoinHorizontal(
 			lipgloss.Top,
@@ -269,6 +285,7 @@ func (a *App) helpView() string {
 		"  c                Cancel pipeline/job",
 		"  o                Open in browser",
 		"  y                Copy URL to clipboard",
+		"  f                Fullscreen log (detail panel)",
 		"  R                Force refresh",
 		"  ?                Toggle this help",
 		"  q                Quit",
@@ -294,8 +311,21 @@ func (a *App) handleWindowSize(msg tea.WindowSizeMsg) tea.Cmd {
 		return nil
 	}
 	a.tooNarrow = false
+	a.resizePanels()
 
+	return nil
+}
+
+func (a *App) resizePanels() {
 	panelHeight := a.height - 1
+	a.statusBar.Width = a.width
+
+	if a.fullscreen {
+		a.detailPanel.Width = a.width
+		a.detailPanel.Height = panelHeight
+		return
+	}
+
 	quarter := a.width / 4
 
 	a.pipelinesPanel.Width = quarter
@@ -306,10 +336,6 @@ func (a *App) handleWindowSize(msg tea.WindowSizeMsg) tea.Cmd {
 
 	a.detailPanel.Width = a.width - (quarter * 2)
 	a.detailPanel.Height = panelHeight
-
-	a.statusBar.Width = a.width
-
-	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +375,11 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return a.handleEnter()
 
 	case KeyEsc:
+		if a.fullscreen {
+			a.fullscreen = false
+			a.resizePanels()
+			return nil
+		}
 		return a.handleEsc()
 
 	case KeyR:
@@ -372,6 +403,13 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case KeyQuestion:
 		a.showHelp = true
 		return nil
+
+	case KeyF:
+		if a.focusedPanel == PanelDetail && a.detailPanel.HasJob() {
+			a.fullscreen = !a.fullscreen
+			a.resizePanels()
+		}
+		return nil
 	}
 
 	return nil
@@ -389,7 +427,7 @@ func (a *App) handleConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "n", KeyEsc:
 		a.confirmDialog = nil
 		a.statusBar.SetNotification("Cancelled", false)
-		return nil
+		return a.notifyTimer()
 	}
 	return nil
 }
@@ -558,7 +596,7 @@ func (a *App) yankURL() tea.Cmd {
 		return nil
 	}
 	a.statusBar.SetNotification("URL copied: "+url, false)
-	return tea.SetClipboard(url)
+	return tea.Batch(tea.SetClipboard(url), a.notifyTimer())
 }
 
 func (a *App) selectedURL() string {
@@ -573,6 +611,16 @@ func (a *App) selectedURL() string {
 		}
 	}
 	return ""
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+func (a *App) notifyTimer() tea.Cmd {
+	return tea.Tick(notificationTimeout, func(time.Time) tea.Msg {
+		return clearNotificationMsg{}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +654,13 @@ func (a *App) updateStatusBarActions() {
 	}
 	if hasURL {
 		actions = append(actions, "[o]pen", "[y]ank")
+	}
+	if a.focusedPanel == PanelDetail && a.detailPanel.HasJob() {
+		if a.fullscreen {
+			actions = append(actions, "[f] exit full")
+		} else {
+			actions = append(actions, "[f]ull")
+		}
 	}
 	actions = append(actions, "[R]efresh", "[?]help", "[q]uit")
 

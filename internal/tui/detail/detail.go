@@ -3,12 +3,18 @@ package detail
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/steven/manifold/internal/provider"
 	"github.com/steven/manifold/internal/tui/shared"
 )
+
+// Matches ISO 8601 timestamps at the start of log lines (GitHub Actions format)
+var logTimestampRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})\.\d+Z)\s*`)
+
+var timestampStyle = lipgloss.NewStyle().Foreground(shared.ColorDarkGray)
 
 const defaultMaxLogLines = 10000
 
@@ -122,12 +128,35 @@ func (m *Model) ScrollDown() {
 
 // logViewHeight returns the number of lines available for log display.
 func (m Model) logViewHeight() int {
-	stepsHeight := len(m.job.Steps) + 1 // steps + separator
-	available := m.Height - 2 - stepsHeight
+	// Height - 2 (border) - 1 (title) - len(steps) - 1 (separator)
+	available := m.Height - 4 - len(m.job.Steps)
 	if available < 1 {
 		return 1
 	}
 	return available
+}
+
+// formatLogLine colorizes timestamps at the start of log lines.
+func formatLogLine(line string, maxWidth int) string {
+	if len(line) > maxWidth {
+		line = line[:maxWidth]
+	}
+	if m := logTimestampRe.FindStringIndex(line); m != nil {
+		ts := line[:m[1]]
+		rest := line[m[1]:]
+		return timestampStyle.Render(ts) + shared.NormalItem.Render(rest)
+	}
+	return shared.NormalItem.Render(line)
+}
+
+// contentWidth returns the usable width inside the border.
+func (m Model) contentWidth() int {
+	// Border takes 2 chars (left + right)
+	w := m.Width - 2
+	if w < 1 {
+		return 1
+	}
+	return w
 }
 
 // View renders the detail panel with steps and log output.
@@ -145,21 +174,29 @@ func (m Model) View() string {
 		)
 	}
 
+	cw := m.contentWidth()
+
 	// Steps section
-	b.WriteString(shared.PanelTitle.Render(fmt.Sprintf("Job: %s", m.job.Name)))
+	title := fmt.Sprintf("Job: %s", m.job.Name)
+	if len(title) > cw {
+		title = title[:cw]
+	}
+	b.WriteString(shared.PanelTitle.Render(title))
 	b.WriteString("\n")
 
 	for _, step := range m.job.Steps {
 		icon := shared.StatusIcon(string(step.Status))
 		color := shared.StatusColor(string(step.Status))
 		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
-		line := fmt.Sprintf("  %s %s", iconStyled, step.Name)
-		b.WriteString(line)
-		b.WriteString("\n")
+		name := step.Name
+		if len(name) > cw-4 {
+			name = name[:cw-4]
+		}
+		b.WriteString(fmt.Sprintf("  %s %s\n", iconStyled, name))
 	}
 
 	// Separator
-	b.WriteString(strings.Repeat("─", max(0, m.Width-4)))
+	b.WriteString(strings.Repeat("─", max(0, cw)))
 	b.WriteString("\n")
 
 	// Log section
@@ -170,9 +207,12 @@ func (m Model) View() string {
 	}
 
 	visible := m.logLines[m.logOffset:end]
-	for _, line := range visible {
-		b.WriteString(shared.NormalItem.Render(line))
-		b.WriteString("\n")
+	for i, line := range visible {
+		line = formatLogLine(line, cw)
+		b.WriteString(line)
+		if i < len(visible)-1 {
+			b.WriteString("\n")
+		}
 	}
 
 	borderStyle := shared.PanelBorder

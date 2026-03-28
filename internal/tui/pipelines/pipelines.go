@@ -1,4 +1,3 @@
-// internal/tui/pipelines/pipelines.go
 package pipelines
 
 import (
@@ -10,16 +9,15 @@ import (
 	"github.com/steven/manifold/internal/tui/shared"
 )
 
-// Model represents the pipeline list panel.
 type Model struct {
 	pipelines []provider.Pipeline
 	cursor    int
+	offset    int // viewport scroll offset
 	Width     int
 	Height    int
 	Focused   bool
 }
 
-// New creates a new pipeline list panel.
 func New(width, height int) Model {
 	return Model{
 		Width:  width,
@@ -27,15 +25,14 @@ func New(width, height int) Model {
 	}
 }
 
-// SetPipelines updates the pipeline list and clamps the cursor.
 func (m *Model) SetPipelines(pipelines []provider.Pipeline) {
 	m.pipelines = pipelines
 	if m.cursor >= len(m.pipelines) {
 		m.cursor = max(0, len(m.pipelines)-1)
 	}
+	m.clampOffset()
 }
 
-// Selected returns the currently selected pipeline.
 func (m Model) Selected() (provider.Pipeline, bool) {
 	if len(m.pipelines) == 0 {
 		return provider.Pipeline{}, false
@@ -43,56 +40,87 @@ func (m Model) Selected() (provider.Pipeline, bool) {
 	return m.pipelines[m.cursor], true
 }
 
-// MoveDown moves the cursor down by one.
 func (m *Model) MoveDown() {
 	if m.cursor < len(m.pipelines)-1 {
 		m.cursor++
+		m.clampOffset()
 	}
 }
 
-// MoveUp moves the cursor up by one.
 func (m *Model) MoveUp() {
 	if m.cursor > 0 {
 		m.cursor--
+		m.clampOffset()
 	}
 }
 
-// GoToTop moves the cursor to the first item.
 func (m *Model) GoToTop() {
 	m.cursor = 0
+	m.offset = 0
 }
 
-// GoToBottom moves the cursor to the last item.
 func (m *Model) GoToBottom() {
 	if len(m.pipelines) > 0 {
 		m.cursor = len(m.pipelines) - 1
+		m.clampOffset()
 	}
 }
 
-// View renders the pipeline list panel.
+// viewHeight returns the number of visible item lines inside the border.
+func (m Model) viewHeight() int {
+	// Height - 2 (border) - 1 (title)
+	h := m.Height - 3
+	if h < 1 {
+		return 1
+	}
+	return h
+}
+
+func (m *Model) clampOffset() {
+	vh := m.viewHeight()
+	// Ensure cursor is visible
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+vh {
+		m.offset = m.cursor - vh + 1
+	}
+	// Clamp offset bounds
+	maxOffset := len(m.pipelines) - vh
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.offset > maxOffset {
+		m.offset = maxOffset
+	}
+}
+
 func (m Model) View() string {
 	var b strings.Builder
 
-	contentHeight := m.Height - 2 // account for border
+	vh := m.viewHeight()
+	cw := m.Width - 2 // content width inside border
 
-	for i, p := range m.pipelines {
-		if i >= contentHeight {
-			break
-		}
+	end := m.offset + vh
+	if end > len(m.pipelines) {
+		end = len(m.pipelines)
+	}
+
+	for i := m.offset; i < end; i++ {
+		p := m.pipelines[i]
 
 		icon := shared.StatusIcon(string(p.Status))
 		color := shared.StatusColor(string(p.Status))
 		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 
-		ref := truncate(p.Ref, m.Width-10)
-		line := fmt.Sprintf(" %s %s", iconStyled, ref)
+		ref := truncate(p.Ref, cw-4)
 
 		if i == m.cursor {
-			line = shared.SelectedItem.Render(fmt.Sprintf(" %s %s", icon, ref))
+			b.WriteString(shared.SelectedItem.Render(fmt.Sprintf(" %s %s", icon, ref)))
+		} else {
+			b.WriteString(fmt.Sprintf(" %s %s", iconStyled, ref))
 		}
-
-		b.WriteString(line)
-		if i < len(m.pipelines)-1 {
+		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}

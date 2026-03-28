@@ -22,6 +22,7 @@ const (
 	KeyO        = "o"
 	KeyY        = "y"
 	KeyShiftR   = "R"
+	KeyF        = "f"
 	KeyQuestion = "?"
 	KeyQ        = "q"
 	KeyCtrlC    = "ctrl+c"

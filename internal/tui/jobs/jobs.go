@@ -1,4 +1,3 @@
-// internal/tui/jobs/jobs.go
 package jobs
 
 import (
@@ -11,35 +10,33 @@ import (
 	"github.com/steven/manifold/internal/tui/shared"
 )
 
-// Model represents the jobs list panel.
 type Model struct {
 	jobs    []provider.Job
 	cursor  int
+	offset  int // viewport scroll offset
 	Width   int
 	Height  int
 	Focused bool
 }
 
-// New creates a new jobs list panel.
 func New(width, height int) Model {
 	return Model{Width: width, Height: height}
 }
 
-// SetJobs updates the job list and clamps the cursor.
 func (m *Model) SetJobs(jobs []provider.Job) {
 	m.jobs = jobs
 	if m.cursor >= len(m.jobs) {
 		m.cursor = max(0, len(m.jobs)-1)
 	}
+	m.clampOffset()
 }
 
-// Clear empties the job list and resets the cursor.
 func (m *Model) Clear() {
 	m.jobs = nil
 	m.cursor = 0
+	m.offset = 0
 }
 
-// Selected returns the currently selected job.
 func (m Model) Selected() (provider.Job, bool) {
 	if len(m.jobs) == 0 {
 		return provider.Job{}, false
@@ -47,57 +44,85 @@ func (m Model) Selected() (provider.Job, bool) {
 	return m.jobs[m.cursor], true
 }
 
-// MoveDown moves the cursor down by one.
 func (m *Model) MoveDown() {
 	if m.cursor < len(m.jobs)-1 {
 		m.cursor++
+		m.clampOffset()
 	}
 }
 
-// MoveUp moves the cursor up by one.
 func (m *Model) MoveUp() {
 	if m.cursor > 0 {
 		m.cursor--
+		m.clampOffset()
 	}
 }
 
-// GoToTop moves the cursor to the first item.
 func (m *Model) GoToTop() {
 	m.cursor = 0
+	m.offset = 0
 }
 
-// GoToBottom moves the cursor to the last item.
 func (m *Model) GoToBottom() {
 	if len(m.jobs) > 0 {
 		m.cursor = len(m.jobs) - 1
+		m.clampOffset()
 	}
 }
 
-// View renders the jobs list panel.
+// viewHeight returns the number of visible item lines inside the border.
+func (m Model) viewHeight() int {
+	h := m.Height - 3 // border (2) + title (1)
+	if h < 1 {
+		return 1
+	}
+	return h
+}
+
+func (m *Model) clampOffset() {
+	vh := m.viewHeight()
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+vh {
+		m.offset = m.cursor - vh + 1
+	}
+	maxOffset := len(m.jobs) - vh
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.offset > maxOffset {
+		m.offset = maxOffset
+	}
+}
+
 func (m Model) View() string {
 	var b strings.Builder
 
-	contentHeight := m.Height - 2 // account for border
+	vh := m.viewHeight()
+	cw := m.Width - 2
 
-	for i, j := range m.jobs {
-		if i >= contentHeight {
-			break
-		}
+	end := m.offset + vh
+	if end > len(m.jobs) {
+		end = len(m.jobs)
+	}
+
+	for i := m.offset; i < end; i++ {
+		j := m.jobs[i]
 
 		icon := shared.StatusIcon(string(j.Status))
 		color := shared.StatusColor(string(j.Status))
 		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 
 		dur := formatDuration(j.Duration)
-		name := j.Name
+		name := truncate(j.Name, cw-len(dur)-5)
 
-		line := fmt.Sprintf(" %s %-20s %s", iconStyled, name, dur)
 		if i == m.cursor {
-			line = shared.SelectedItem.Render(fmt.Sprintf(" %s %-20s %s", icon, name, dur))
+			b.WriteString(shared.SelectedItem.Render(fmt.Sprintf(" %s %-20s %s", icon, name, dur)))
+		} else {
+			b.WriteString(fmt.Sprintf(" %s %-20s %s", iconStyled, name, dur))
 		}
-
-		b.WriteString(line)
-		if i < len(m.jobs)-1 {
+		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}
@@ -110,7 +135,6 @@ func (m Model) View() string {
 	return borderStyle.Width(m.Width).Height(m.Height).Render(shared.PanelTitle.Render("Jobs") + "\n" + b.String())
 }
 
-// formatDuration formats a duration as a short human-readable string.
 func formatDuration(d time.Duration) string {
 	if d == 0 {
 		return ""
@@ -121,4 +145,17 @@ func formatDuration(d time.Duration) string {
 	m := int(d.Minutes())
 	s := int(d.Seconds()) % 60
 	return fmt.Sprintf("%dm%02ds", m, s)
+}
+
+func truncate(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
