@@ -45,6 +45,13 @@ func (b *Bitbucket) Name() string {
 	return "bitbucket"
 }
 
+// webHost returns the browser-facing host URL, derived from the API baseURL.
+func (b *Bitbucket) webHost() string {
+	host := strings.Replace(b.baseURL, "api.bitbucket.org", "bitbucket.org", 1)
+	host = strings.TrimSuffix(host, "/")
+	return host
+}
+
 // setAuth applies the appropriate authentication to the request.
 func (b *Bitbucket) setAuth(req *http.Request) {
 	if b.username != "" {
@@ -218,6 +225,7 @@ func (b *Bitbucket) ListPipelines(ctx context.Context, limit int) ([]provider.Pi
 }
 
 // GetJobs returns jobs (Bitbucket "steps") for a pipeline.
+// Job IDs use composite format "pipelineID/stepID" because GetLog needs both.
 func (b *Bitbucket) GetJobs(ctx context.Context, pipelineID string) ([]provider.Job, error) {
 	url := fmt.Sprintf("%s/2.0/repositories/%s/%s/pipelines/%s/steps/",
 		b.baseURL, b.owner, b.repo, pipelineID)
@@ -237,20 +245,22 @@ func (b *Bitbucket) GetJobs(ctx context.Context, pipelineID string) ([]provider.
 			duration = completedAt.Sub(startedAt)
 		}
 
+		stepID := trimUUID(s.UUID)
 		jobs = append(jobs, provider.Job{
-			ID:        trimUUID(s.UUID),
+			ID:        pipelineID + "/" + stepID,
 			Name:      s.Name,
 			Status:    mapStatus(s.State.Name, s.State.Result.Name),
 			StartedAt: startedAt,
 			Duration:  duration,
+			WebURL:    fmt.Sprintf("%s/%s/%s/pipelines/results/%s/steps/%s", b.webHost(), b.owner, b.repo, pipelineID, stepID),
 		})
 	}
 	return jobs, nil
 }
 
-// GetSteps returns nil because Bitbucket steps have no sub-steps.
-func (b *Bitbucket) GetSteps(ctx context.Context, jobID string) ([]provider.Step, error) {
-	return nil, nil
+// GetSteps returns empty because Bitbucket steps have no sub-steps.
+func (b *Bitbucket) GetSteps(_ context.Context, _ string) ([]provider.Step, error) {
+	return []provider.Step{}, nil
 }
 
 // GetLog returns the log for a step. jobID must be in "pipelineID/stepID" format.

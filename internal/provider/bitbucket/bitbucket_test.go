@@ -171,13 +171,72 @@ func TestBearerAuth(t *testing.T) {
 	}
 }
 
-func TestGetStepsNil(t *testing.T) {
+func TestGetJobsCompositeID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"values": []map[string]interface{}{
+				{
+					"uuid":         "{step-uuid-1}",
+					"name":         "Build",
+					"state":        map[string]interface{}{"name": "COMPLETED", "result": map[string]interface{}{"name": "SUCCESSFUL"}},
+					"started_on":   "2024-01-01T00:00:00Z",
+					"completed_on": "2024-01-01T00:02:00Z",
+				},
+				{
+					"uuid":         "{step-uuid-2}",
+					"name":         "Test",
+					"state":        map[string]interface{}{"name": "IN_PROGRESS", "result": map[string]interface{}{"name": ""}},
+					"started_on":   "2024-01-01T00:02:00Z",
+					"completed_on": "",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	b := bitbucket.New("tok", "", "owner", "repo", srv.URL)
+	jobs, err := b.GetJobs(context.Background(), "pipeline-123")
+	if err != nil {
+		t.Fatalf("GetJobs error: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(jobs))
+	}
+
+	// Job ID must be composite "pipelineID/stepID" for GetLog to work
+	if jobs[0].ID != "pipeline-123/step-uuid-1" {
+		t.Errorf("expected composite ID 'pipeline-123/step-uuid-1', got %q", jobs[0].ID)
+	}
+	if jobs[1].ID != "pipeline-123/step-uuid-2" {
+		t.Errorf("expected composite ID 'pipeline-123/step-uuid-2', got %q", jobs[1].ID)
+	}
+
+	// WebURL should be populated
+	if jobs[0].WebURL == "" {
+		t.Error("expected non-empty WebURL for job")
+	}
+	if !strings.Contains(jobs[0].WebURL, "pipeline-123") {
+		t.Errorf("WebURL should contain pipelineID, got %q", jobs[0].WebURL)
+	}
+
+	// Status mapping
+	if jobs[0].Status != provider.StatusSuccess {
+		t.Errorf("expected StatusSuccess, got %q", jobs[0].Status)
+	}
+	if jobs[1].Status != provider.StatusRunning {
+		t.Errorf("expected StatusRunning, got %q", jobs[1].Status)
+	}
+}
+
+func TestGetStepsEmpty(t *testing.T) {
 	b := bitbucket.New("tok", "user", "owner", "repo", "")
 	steps, err := b.GetSteps(context.Background(), "123")
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
-	if steps != nil {
-		t.Errorf("expected nil steps, got %v", steps)
+	if len(steps) != 0 {
+		t.Errorf("expected empty steps, got %v", steps)
 	}
 }

@@ -126,6 +126,7 @@ func (a *App) updatePanelFocus() {
 	a.pipelinesPanel.Focused = a.focusedPanel == PanelPipelines
 	a.jobsPanel.Focused = a.focusedPanel == PanelJobs
 	a.detailPanel.Focused = a.focusedPanel == PanelDetail
+	a.updateStatusBarActions()
 }
 
 func (a *App) Init() tea.Cmd {
@@ -176,6 +177,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case JobsMsg:
 		a.jobsPanel.SetJobs(msg.Jobs)
+		a.updateStatusBarActions()
 		return a, nil
 
 	case StepsMsg:
@@ -407,6 +409,7 @@ func (a *App) moveFocusedDown() {
 	case PanelDetail:
 		a.detailPanel.ScrollDown()
 	}
+	a.updateStatusBarActions()
 }
 
 func (a *App) moveFocusedUp() {
@@ -420,6 +423,7 @@ func (a *App) moveFocusedUp() {
 	case PanelDetail:
 		a.detailPanel.ScrollUp()
 	}
+	a.updateStatusBarActions()
 }
 
 func (a *App) moveFocusedTop() {
@@ -429,6 +433,7 @@ func (a *App) moveFocusedTop() {
 	case PanelJobs:
 		a.jobsPanel.GoToTop()
 	}
+	a.updateStatusBarActions()
 }
 
 func (a *App) moveFocusedBottom() {
@@ -438,6 +443,7 @@ func (a *App) moveFocusedBottom() {
 	case PanelJobs:
 		a.jobsPanel.GoToBottom()
 	}
+	a.updateStatusBarActions()
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +576,43 @@ func (a *App) selectedURL() string {
 }
 
 // ---------------------------------------------------------------------------
+// Status bar context
+// ---------------------------------------------------------------------------
+
+func (a *App) updateStatusBarActions() {
+	var actions []string
+
+	var status provider.PipelineStatus
+	var hasURL bool
+
+	switch a.focusedPanel {
+	case PanelPipelines:
+		if p, ok := a.pipelinesPanel.Selected(); ok {
+			status = p.Status
+			hasURL = p.WebURL != ""
+		}
+	case PanelJobs, PanelDetail:
+		if j, ok := a.jobsPanel.Selected(); ok {
+			status = j.Status
+			hasURL = j.WebURL != ""
+		}
+	}
+
+	if status == provider.StatusFailed || status == provider.StatusCanceled {
+		actions = append(actions, "[r]etry")
+	}
+	if status == provider.StatusRunning || status == provider.StatusQueued || status == provider.StatusPending {
+		actions = append(actions, "[c]ancel")
+	}
+	if hasURL {
+		actions = append(actions, "[o]pen", "[y]ank")
+	}
+	actions = append(actions, "[R]efresh", "[?]help", "[q]uit")
+
+	a.statusBar.SetActions(actions)
+}
+
+// ---------------------------------------------------------------------------
 // Fetch commands
 // ---------------------------------------------------------------------------
 
@@ -669,7 +712,8 @@ func (a *App) handlePipelinesMsg(msg PipelinesMsg) tea.Cmd {
 		a.poll.SetHasRunning(hasRunning)
 	}
 
-	// Only re-fetch jobs if the selected pipeline changed
+	a.updateStatusBarActions()
+
 	if p, ok := a.pipelinesPanel.Selected(); ok && a.focusedPanel != PanelPipelines {
 		if p.ID != a.selectedPipeline {
 			a.selectedPipeline = p.ID

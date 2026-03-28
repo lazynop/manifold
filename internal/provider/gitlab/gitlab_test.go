@@ -179,6 +179,58 @@ func TestStatusMapping(t *testing.T) {
 	}
 }
 
+func TestGetStepsFromTrace(t *testing.T) {
+	trace := "section_start:1700000000:build_step\r\x1b[0K\n" +
+		"Building...\n" +
+		"section_end:1700000030:build_step\r\x1b[0K\n" +
+		"section_start:1700000030:test_step\r\x1b[0K\n" +
+		"Testing...\n"
+	// test_step has no section_end — it's still running
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(trace))
+	}))
+	defer srv.Close()
+
+	g := gitlab.New("tok", "owner", "repo", srv.URL)
+	steps, err := g.GetSteps(context.Background(), "42")
+	if err != nil {
+		t.Fatalf("GetSteps error: %v", err)
+	}
+
+	// Should have 2 steps: build (completed) and test (running/unclosed)
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(steps))
+	}
+
+	var buildStep, testStep *provider.Step
+	for i := range steps {
+		switch steps[i].Name {
+		case "build_step":
+			buildStep = &steps[i]
+		case "test_step":
+			testStep = &steps[i]
+		}
+	}
+
+	if buildStep == nil {
+		t.Fatal("missing build_step")
+	}
+	if buildStep.Status != provider.StatusSuccess {
+		t.Errorf("build_step: expected StatusSuccess, got %q", buildStep.Status)
+	}
+	if buildStep.Duration != 30_000_000_000 { // 30 seconds
+		t.Errorf("build_step: expected 30s duration, got %v", buildStep.Duration)
+	}
+
+	if testStep == nil {
+		t.Fatal("missing test_step")
+	}
+	if testStep.Status != provider.StatusRunning {
+		t.Errorf("test_step: expected StatusRunning, got %q", testStep.Status)
+	}
+}
+
 func TestName(t *testing.T) {
 	g := gitlab.New("tok", "owner", "repo", "")
 	if g.Name() != "gitlab" {

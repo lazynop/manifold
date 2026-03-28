@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,11 +20,12 @@ const defaultBaseURL = "https://gitlab.com"
 
 // GitLab implements provider.Provider for GitLab CI.
 type GitLab struct {
-	token   string
-	owner   string
-	repo    string
-	baseURL string
-	client  http.Client
+	token        string
+	owner        string
+	repo         string
+	baseURL      string
+	client       http.Client
+	commitCache  map[string]string // SHA → commit message
 }
 
 // New creates a new GitLab provider. If baseURL is empty, it defaults to
@@ -33,10 +35,11 @@ func New(token, owner, repo, baseURL string) *GitLab {
 		baseURL = defaultBaseURL
 	}
 	return &GitLab{
-		token:   token,
-		owner:   owner,
-		repo:    repo,
-		baseURL: baseURL,
+		token:       token,
+		owner:       owner,
+		repo:        repo,
+		baseURL:     baseURL,
+		commitCache: make(map[string]string),
 	}
 }
 
@@ -114,7 +117,7 @@ func mapStatus(status string) provider.PipelineStatus {
 		return provider.StatusSuccess
 	case "failed":
 		return provider.StatusFailed
-	case "canceled":
+	case "canceled", "closed":
 		return provider.StatusCanceled
 	case "skipped":
 		return provider.StatusSkipped
@@ -140,6 +143,10 @@ type pipelineResponse struct {
 	User      userInfo `json:"user"`
 }
 
+type commitResponse struct {
+	Message string `json:"message"`
+}
+
 type jobAPIResponse struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
@@ -147,6 +154,22 @@ type jobAPIResponse struct {
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
 	WebURL     string `json:"web_url"`
+}
+
+// fetchCommitMessage returns the commit message for a SHA, using a cache to avoid
+// repeated API calls for the same commit across poll cycles.
+func (g *GitLab) fetchCommitMessage(ctx context.Context, sha string) string {
+	if msg, ok := g.commitCache[sha]; ok {
+		return msg
+	}
+	commitURL := fmt.Sprintf("%s/api/v4/projects/%s/repository/commits/%s",
+		g.baseURL, g.projectPath(), sha)
+	var cr commitResponse
+	if err := g.doJSON(ctx, http.MethodGet, commitURL, &cr); err == nil {
+		g.commitCache[sha] = cr.Message
+		return cr.Message
+	}
+	return ""
 }
 
 // --- Provider methods ---
@@ -176,10 +199,13 @@ func (g *GitLab) ListPipelines(ctx context.Context, limit int) ([]provider.Pipel
 			duration = updatedAt.Sub(startedAt)
 		}
 
+		message := g.fetchCommitMessage(ctx, p.SHA)
+
 		pipelines = append(pipelines, provider.Pipeline{
 			ID:        strconv.Itoa(p.ID),
 			Ref:       p.Ref,
 			Commit:    commit,
+			Message:   message,
 			Author:    p.User.Name,
 			Status:    mapStatus(p.Status),
 			StartedAt: startedAt,
@@ -289,6 +315,21 @@ func parseStepsFromTrace(trace string) []provider.Step {
 			}
 		}
 	}
+
+	// Unclosed sections are still in progress — append sorted by start line
+	unclosed := make([]provider.Step, 0, len(open))
+	for _, o := range open {
+		unclosed = append(unclosed, provider.Step{
+			Name:     o.name,
+			Status:   provider.StatusRunning,
+			LogStart: o.startLine,
+		})
+	}
+	sort.Slice(unclosed, func(i, j int) bool {
+		return unclosed[i].LogStart < unclosed[j].LogStart
+	})
+	steps = append(steps, unclosed...)
+
 	return steps
 }
 
