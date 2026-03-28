@@ -14,15 +14,16 @@ const defaultMaxLogLines = 10000
 
 // Model represents the detail panel showing job steps and log output.
 type Model struct {
-	job        provider.Job
-	hasJob     bool
-	logLines   []string
-	logOffset  int
-	autoScroll bool
-	maxLogLines int
-	Width      int
-	Height     int
-	Focused    bool
+	job             provider.Job
+	hasJob          bool
+	logLines        []string
+	logOffset       int
+	remoteLogOffset int
+	autoScroll      bool
+	maxLogLines     int
+	Width           int
+	Height          int
+	Focused         bool
 }
 
 // New creates a new detail panel.
@@ -78,10 +79,11 @@ func (m *Model) AppendLog(text string) {
 	}
 }
 
-// ClearLog clears the log buffer.
+// ClearLog clears the log buffer and resets the remote log offset.
 func (m *Model) ClearLog() {
 	m.logLines = nil
 	m.logOffset = 0
+	m.remoteLogOffset = 0
 }
 
 // LogLineCount returns the number of log lines.
@@ -97,6 +99,16 @@ func (m Model) LogOffset() int {
 // SetLogOffset sets the log scroll offset.
 func (m *Model) SetLogOffset(offset int) {
 	m.logOffset = offset
+}
+
+// RemoteLogOffset returns the byte offset used for fetching the next chunk of log from the provider.
+func (m Model) RemoteLogOffset() int {
+	return m.remoteLogOffset
+}
+
+// SetRemoteLogOffset sets the byte offset for the next remote log fetch.
+func (m *Model) SetRemoteLogOffset(offset int) {
+	m.remoteLogOffset = offset
 }
 
 // ScrollUp scrolls the log up and disables auto-scroll.

@@ -5,6 +5,9 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -13,6 +16,7 @@ import (
 	"github.com/steven/manifold/internal/tui/detail"
 	"github.com/steven/manifold/internal/tui/jobs"
 	"github.com/steven/manifold/internal/tui/pipelines"
+	"github.com/steven/manifold/internal/tui/shared"
 	"github.com/steven/manifold/internal/tui/statusbar"
 )
 
@@ -22,6 +26,8 @@ const (
 	PanelJobs      = 1
 	PanelDetail    = 2
 	panelCount     = 3
+
+	minTerminalWidth = 80
 )
 
 // Message types used to communicate updates between commands and the model.
@@ -41,7 +47,6 @@ type (
 )
 
 // confirmState holds the state of a pending confirmation dialog.
-// This is defined in app.go to avoid an import cycle with tui/confirm.
 type confirmState struct {
 	Message   string
 	Action    string
@@ -50,27 +55,24 @@ type confirmState struct {
 	Width     int
 }
 
-// Confirm marks the dialog as confirmed.
 func (c *confirmState) Confirm() {
 	c.Confirmed = true
 	c.Answered = true
 }
 
-// Deny marks the dialog as denied.
 func (c *confirmState) Deny() {
 	c.Confirmed = false
 	c.Answered = true
 }
 
-// view renders the confirmation dialog inline using tui styles.
 func (c *confirmState) view() string {
 	prompt := fmt.Sprintf("%s  [y] yes  [n] no", c.Message)
 	inner := lipgloss.NewStyle().
-		Foreground(ColorWhite).
+		Foreground(shared.ColorWhite).
 		Render(prompt)
-	return PanelBorderActive.
+	return shared.PanelBorderActive.
 		Width(c.Width).
-		Render(PanelTitle.Render(fmt.Sprintf("Confirm: %s", c.Action)) + "\n\n" + inner)
+		Render(shared.PanelTitle.Render(fmt.Sprintf("Confirm: %s", c.Action)) + "\n\n" + inner)
 }
 
 // App is the root Bubble Tea model that ties all panels together.
@@ -94,6 +96,8 @@ type App struct {
 	width          int
 	height         int
 	ready          bool
+	tooNarrow      bool
+	showHelp       bool
 }
 
 // NewApp creates a new App initialized with the given detection result.
@@ -138,33 +142,36 @@ func (a *App) ProviderLabel() string {
 	return fmt.Sprintf("%s/%s/%s", d.Host, d.Owner, d.Repo)
 }
 
-// updatePanelFocus sets the Focused flag on each panel model.
 func (a *App) updatePanelFocus() {
 	a.pipelinesPanel.Focused = a.focusedPanel == PanelPipelines
 	a.jobsPanel.Focused = a.focusedPanel == PanelJobs
 	a.detailPanel.Focused = a.focusedPanel == PanelDetail
 }
 
-// Init is the first function called by Bubble Tea. It triggers the initial
-// pipeline fetch and starts the poll timer.
+// Init triggers the initial pipeline fetch and starts poll timers.
 func (a *App) Init() tea.Cmd {
 	a.statusBar.SetProvider(a.ProviderLabel())
 	a.updatePanelFocus()
 
 	cmds := []tea.Cmd{a.fetchPipelines()}
 	if a.poll != nil {
-		cmds = append(cmds, a.poll.TickCmd())
+		cmds = append(cmds, a.poll.TickCmd(), a.poll.LogTickCmd())
 	}
 	return tea.Batch(cmds...)
 }
 
-// Update handles incoming messages and returns the updated model and any commands.
+// Update handles incoming messages.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return a, a.handleWindowSize(msg)
 
 	case tea.KeyPressMsg:
+		// Help overlay: any key dismisses it
+		if a.showHelp {
+			a.showHelp = false
+			return a, nil
+		}
 		if a.confirmDialog != nil {
 			return a, a.handleConfirmKey(msg)
 		}
@@ -173,18 +180,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case poller.TickMsg:
 		var cmds []tea.Cmd
 		if a.poll != nil {
-			if a.poll.ShouldForceRefresh() {
-				cmds = append(cmds, a.fetchPipelines())
-			} else {
-				cmds = append(cmds, a.fetchPipelines())
-			}
-			cmds = append(cmds, a.poll.TickCmd())
+			cmds = append(cmds, a.fetchPipelines(), a.poll.TickCmd())
 		}
 		return a, tea.Batch(cmds...)
 
 	case poller.LogTickMsg:
 		var cmds []tea.Cmd
-		if a.poll != nil && a.poll.ShouldPollLog() {
+		if a.poll != nil && a.poll.ShouldPollLog() && a.detailPanel.HasJob() {
 			cmds = append(cmds, a.fetchLog())
 		}
 		if a.poll != nil {
@@ -209,6 +211,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LogMsg:
 		a.detailPanel.AppendLog(msg.Content)
+		a.detailPanel.SetRemoteLogOffset(msg.NewOffset)
 		return a, nil
 
 	case ActionResultMsg:
@@ -235,28 +238,69 @@ func (a *App) View() tea.View {
 		return v
 	}
 
-	panelsRow := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		a.pipelinesPanel.View(),
-		a.jobsPanel.View(),
-		a.detailPanel.View(),
-	)
+	if a.tooNarrow {
+		msg := fmt.Sprintf("Terminal too narrow (%d cols). Minimum: %d columns.", a.width, minTerminalWidth)
+		v := tea.NewView(lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, msg))
+		v.AltScreen = true
+		return v
+	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, panelsRow, a.statusBar.View())
+	var content string
 
-	if a.confirmDialog != nil {
-		// Overlay the confirm dialog in the centre of the screen.
-		dialogView := a.confirmDialog.view()
-		content = lipgloss.Place(
-			a.width, a.height-1,
-			lipgloss.Center, lipgloss.Center,
-			dialogView,
-		) + "\n" + a.statusBar.View()
+	if a.showHelp {
+		content = a.helpView()
+	} else {
+		panelsRow := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			a.pipelinesPanel.View(),
+			a.jobsPanel.View(),
+			a.detailPanel.View(),
+		)
+		content = lipgloss.JoinVertical(lipgloss.Left, panelsRow, a.statusBar.View())
+
+		if a.confirmDialog != nil {
+			dialogView := a.confirmDialog.view()
+			content = lipgloss.Place(
+				a.width, a.height-1,
+				lipgloss.Center, lipgloss.Center,
+				dialogView,
+			) + "\n" + a.statusBar.View()
+		}
 	}
 
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
+}
+
+func (a *App) helpView() string {
+	help := strings.Join([]string{
+		shared.PanelTitle.Render("Manifold — Keybindings"),
+		"",
+		"  Navigation",
+		"  Tab / l          Next panel",
+		"  Shift+Tab / h    Previous panel",
+		"  j / ↓            Move down",
+		"  k / ↑            Move up",
+		"  g                Jump to top",
+		"  G                Jump to bottom",
+		"  Enter            Drill down",
+		"  Esc              Go back",
+		"",
+		"  Actions",
+		"  r                Retry pipeline/job",
+		"  c                Cancel pipeline/job",
+		"  o                Open in browser",
+		"  y                Copy URL to clipboard",
+		"  R                Force refresh",
+		"  ?                Toggle this help",
+		"  q                Quit",
+		"",
+		"  Press any key to dismiss",
+	}, "\n")
+
+	return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center,
+		shared.PanelBorderActive.Width(50).Render(help))
 }
 
 // ---------------------------------------------------------------------------
@@ -268,18 +312,23 @@ func (a *App) handleWindowSize(msg tea.WindowSizeMsg) tea.Cmd {
 	a.height = msg.Height
 	a.ready = true
 
-	// Divide width into three panels with equal space.
-	panelHeight := a.height - 1 // reserve 1 line for status bar
-	third := a.width / 3
+	if a.width < minTerminalWidth {
+		a.tooNarrow = true
+		return nil
+	}
+	a.tooNarrow = false
 
-	a.pipelinesPanel.Width = third
+	// Panel widths: 25% / 25% / 50% per spec
+	panelHeight := a.height - 1
+	quarter := a.width / 4
+
+	a.pipelinesPanel.Width = quarter
 	a.pipelinesPanel.Height = panelHeight
 
-	a.jobsPanel.Width = third
+	a.jobsPanel.Width = quarter
 	a.jobsPanel.Height = panelHeight
 
-	// Detail panel gets remaining width.
-	a.detailPanel.Width = a.width - (third * 2)
+	a.detailPanel.Width = a.width - (quarter * 2)
 	a.detailPanel.Height = panelHeight
 
 	a.statusBar.Width = a.width
@@ -343,6 +392,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			a.poll.RequestRefresh()
 		}
 		return a.fetchPipelines()
+
+	case KeyQuestion:
+		a.showHelp = true
+		return nil
 	}
 
 	return nil
@@ -422,13 +475,11 @@ func (a *App) moveFocusedBottom() {
 func (a *App) handleEnter() tea.Cmd {
 	switch a.focusedPanel {
 	case PanelPipelines:
-		// Drill into jobs for selected pipeline.
 		if _, ok := a.pipelinesPanel.Selected(); ok {
 			a.FocusNext()
 			return a.fetchJobsForSelected()
 		}
 	case PanelJobs:
-		// Drill into detail for selected job.
 		if j, ok := a.jobsPanel.Selected(); ok {
 			a.detailPanel.SetJob(j)
 			a.FocusNext()
@@ -493,9 +544,7 @@ func (a *App) executeAction(action string) tea.Cmd {
 		return nil
 	}
 
-	// Parse action string: "<verb>-<target>:<id>"
 	var verb, target, id string
-	// Format is "retry-pipeline:id", "cancel-job:id", etc.
 	for _, prefix := range []string{"retry-pipeline:", "cancel-pipeline:", "retry-job:", "cancel-job:"} {
 		if len(action) > len(prefix) && action[:len(prefix)] == prefix {
 			id = action[len(prefix):]
@@ -519,16 +568,18 @@ func (a *App) executeAction(action string) tea.Cmd {
 
 	prov := a.prov
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		var err error
 		switch verb + "-" + target {
 		case "retry-pipeline":
-			err = prov.RetryPipeline(context.Background(), id)
+			err = prov.RetryPipeline(ctx, id)
 		case "cancel-pipeline":
-			err = prov.CancelPipeline(context.Background(), id)
+			err = prov.CancelPipeline(ctx, id)
 		case "retry-job":
-			err = prov.RetryJob(context.Background(), id)
+			err = prov.RetryJob(ctx, id)
 		case "cancel-job":
-			err = prov.CancelJob(context.Background(), id)
+			err = prov.CancelJob(ctx, id)
 		}
 		return ActionResultMsg{Err: err, Action: verb + " " + target}
 	}
@@ -544,7 +595,16 @@ func (a *App) openBrowserCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		_ = exec.Command("xdg-open", url).Start()
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", url)
+		case "windows":
+			cmd = exec.Command("cmd", "/c", "start", url)
+		default:
+			cmd = exec.Command("xdg-open", url)
+		}
+		_ = cmd.Start()
 		return nil
 	}
 }
@@ -583,7 +643,9 @@ func (a *App) fetchPipelines() tea.Cmd {
 	prov := a.prov
 	limit := a.pipelineLimit
 	return func() tea.Msg {
-		ps, err := prov.ListPipelines(context.Background(), limit)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ps, err := prov.ListPipelines(ctx, limit)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -601,7 +663,9 @@ func (a *App) fetchJobsForSelected() tea.Cmd {
 	}
 	prov := a.prov
 	return func() tea.Msg {
-		js, err := prov.GetJobs(context.Background(), p.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		js, err := prov.GetJobs(ctx, p.ID)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -619,7 +683,9 @@ func (a *App) fetchStepsForSelected() tea.Cmd {
 	}
 	prov := a.prov
 	return func() tea.Msg {
-		steps, err := prov.GetSteps(context.Background(), j.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		steps, err := prov.GetSteps(ctx, j.ID)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -635,10 +701,12 @@ func (a *App) fetchLog() tea.Cmd {
 		return nil
 	}
 	j := a.detailPanel.Job()
-	offset := a.detailPanel.LogOffset()
+	offset := a.detailPanel.RemoteLogOffset()
 	prov := a.prov
 	return func() tea.Msg {
-		content, newOffset, err := prov.GetLog(context.Background(), j.ID, offset)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		content, newOffset, err := prov.GetLog(ctx, j.ID, offset)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -656,11 +724,10 @@ func (a *App) fetchLog() tea.Cmd {
 func (a *App) handlePipelinesMsg(msg PipelinesMsg) tea.Cmd {
 	a.pipelinesPanel.SetPipelines(msg.Pipelines)
 
-	// Update poller state based on whether any pipelines are running.
 	if a.poll != nil {
 		hasRunning := false
 		for _, p := range msg.Pipelines {
-			if p.Status == "running" {
+			if !p.Status.IsTerminal() {
 				hasRunning = true
 				break
 			}
@@ -668,7 +735,6 @@ func (a *App) handlePipelinesMsg(msg PipelinesMsg) tea.Cmd {
 		a.poll.SetHasRunning(hasRunning)
 	}
 
-	// If we have a selected pipeline already, refresh its jobs.
 	if _, ok := a.pipelinesPanel.Selected(); ok && a.focusedPanel != PanelPipelines {
 		return a.fetchJobsForSelected()
 	}

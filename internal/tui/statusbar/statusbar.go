@@ -5,10 +5,11 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
 	"github.com/steven/manifold/internal/tui/shared"
 )
 
-var defaultActions = []string{"[↑↓] navigate", "[enter] select", "[r]etry", "[q]uit"}
+var defaultActions = []string{"[r]etry", "[c]ancel", "[o]pen", "[y]ank", "[R]efresh", "[?]help", "[q]uit"}
 
 // Model represents the status bar at the bottom of the TUI.
 type Model struct {
@@ -66,9 +67,16 @@ func (m Model) View() string {
 		left = leftStyle.Render(strings.Join(m.actions, "  "))
 	}
 
-	right := shared.StatusBarStyle.Render(m.provider)
+	right := shared.StatusBarStyle.Render("● " + m.provider)
 
-	// Pad to fill width
-	bar := lipgloss.NewStyle().Width(m.Width).Render(left + "  " + right)
-	return bar
+	// Right-align provider info by padding with spaces
+	leftW := lipgloss.Width(left)
+	rightW := lipgloss.Width(right)
+	gap := m.Width - leftW - rightW
+	if gap < 1 {
+		gap = 1
+	}
+
+	bar := left + strings.Repeat(" ", gap) + right
+	return lipgloss.NewStyle().Width(m.Width).Render(bar)
 }
