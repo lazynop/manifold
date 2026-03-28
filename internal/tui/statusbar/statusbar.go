@@ -67,9 +67,8 @@ func (m Model) View() string {
 		left = leftStyle.Render(strings.Join(m.actions, "  "))
 	}
 
-	right := shared.StatusBarStyle.Render("● " + m.provider)
+	right := shared.StatusBarStyle.Render(shared.IconRunning + " " + m.provider)
 
-	// Right-align provider info by padding with spaces
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
 	gap := m.Width - leftW - rightW

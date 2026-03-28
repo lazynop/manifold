@@ -12,10 +12,8 @@ import (
 
 const defaultMaxLogLines = 10000
 
-// Model represents the detail panel showing job steps and log output.
 type Model struct {
 	job             provider.Job
-	hasJob          bool
 	logLines        []string
 	logOffset       int
 	remoteLogOffset int
@@ -36,16 +34,13 @@ func New(width, height int) Model {
 	}
 }
 
-// SetJob sets the current job and clears the log.
 func (m *Model) SetJob(j provider.Job) {
 	m.job = j
-	m.hasJob = true
 	m.ClearLog()
 }
 
-// HasJob returns true if a job has been set.
 func (m Model) HasJob() bool {
-	return m.hasJob
+	return m.job.ID != ""
 }
 
 // Job returns the current job.
@@ -53,20 +48,16 @@ func (m Model) Job() provider.Job {
 	return m.job
 }
 
-// AppendLog appends log text, splitting on newlines. Implements a ring buffer.
 func (m *Model) AppendLog(text string) {
 	lines := strings.Split(text, "\n")
-	// If text ends with \n, last element is empty — drop it
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	m.logLines = append(m.logLines, lines...)
 
-	// Ring buffer: trim to maxLogLines
 	if len(m.logLines) > m.maxLogLines {
 		overflow := len(m.logLines) - m.maxLogLines
 		m.logLines = m.logLines[overflow:]
-		// Adjust offset
 		if m.logOffset > overflow {
 			m.logOffset -= overflow
 		} else {
@@ -79,7 +70,6 @@ func (m *Model) AppendLog(text string) {
 	}
 }
 
-// ClearLog clears the log buffer and resets the remote log offset.
 func (m *Model) ClearLog() {
 	m.logLines = nil
 	m.logOffset = 0
@@ -144,7 +134,7 @@ func (m Model) logViewHeight() int {
 func (m Model) View() string {
 	var b strings.Builder
 
-	if !m.hasJob {
+	if !m.HasJob() {
 		borderStyle := shared.PanelBorder
 		if m.Focused {
 			borderStyle = shared.PanelBorderActive
